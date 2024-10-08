@@ -1,11 +1,47 @@
 const std = @import("std");
+const mem = std.mem;
+const os = std.os;
+const assert = std.debug.assert;
 
-const SwpfError = error{
-    InvalidArguments,
-    RenameFailed,
-};
+fn validateArgs(args: [][:0]u8) !void {
+    if (args.len != 3) {
+        return error.InvalidArgCount;
+    }
+
+    const stat1 = try std.fs.cwd().statFile(args[1]);
+    if (stat1.kind != .file) {
+        return error.Arg1IsNotAFile;
+    }
+
+    const stat2 = try std.fs.cwd().statFile(args[2]);
+    if (stat2.kind != .file) {
+        return error.Arg2IsNotAFile;
+    }
+
+    if (mem.eql(u8, args[1], args[2])) {
+        return error.ArgsAreTheSameFile;
+    }
+}
+
+fn printHelpTo(writer: anytype) !void {
+    try writer.print("usage: swpf <file1> <file2>\n", .{});
+    try writer.print("description: swaps the given files\n", .{});
+}
+
+fn swapFiles(file1: []const u8, file2: []const u8) !void {
+    const tmp_file = "very_long_and_stupid_random_name1224123huizilopochtli";
+    comptime assert(tmp_file.len < 256);
+
+    assert(!mem.eql(u8, file1, tmp_file));
+    assert(!mem.eql(u8, file2, tmp_file));
+
+    try std.posix.rename(file1, tmp_file);
+    try std.posix.rename(file2, file1);
+    try std.posix.rename(tmp_file, file2);
+}
 
 pub fn main() !void {
+    // allocations
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -13,21 +49,24 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
-    const stderr = std.io.getStdErr().writer();
-
-    if (args.len != 3) {
-        try stderr.print("usage: swpf <file1> <file2>\n", .{});
-        return SwpfError.InvalidArguments;
+    // help
+    if (args.len == 2 and mem.eql(u8, args[1], "--help")) {
+        const stdout = std.io.getStdOut().writer();
+        try printHelpTo(stdout);
+        return;
     }
 
-    const file1 = args[1];
-    const file2 = args[2];
-    const tmp_file: [:0]const u8 = "swpf_tmp_file_with_stupid_huizilopochtli1234567890_name";
+    // validations
+    const stderr = std.io.getStdErr().writer();
 
-    try std.os.renameZ(file1, tmp_file);
-    std.os.renameZ(file2, file1) catch {
-        try std.os.renameZ(tmp_file, file1);
-        return SwpfError.RenameFailed;
+    validateArgs(args) catch |err| {
+        try stderr.print("{}\n\n", .{err});
+        try printHelpTo(stderr);
+        return;
     };
-    try std.os.renameZ(tmp_file, file2);
+
+    // swapping
+    swapFiles(args[1], args[2]) catch |err| {
+        try stderr.print("{}: manual intervention necessary!\n", .{err});
+    };
 }
